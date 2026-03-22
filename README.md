@@ -1,4 +1,4 @@
-# MindBridge — Hackathon / production README
+# MindBridge README
 
 **MindBridge** is a privacy-first student check-in companion: natural-language check-ins, mood patterns, **explainable threshold nudges**, crisis safety, and an **Impact** dashboard for transparent outcomes.
 
