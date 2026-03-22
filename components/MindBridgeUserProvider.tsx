@@ -59,6 +59,7 @@ export function MindBridgeUserProvider({ children }: { children: ReactNode }) {
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [authFullName, setAuthFullName] = useState<string | null>(null);
   const [hasSupabaseAuth, setHasSupabaseAuth] = useState(false);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +81,7 @@ export function MindBridgeUserProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       localStorage.removeItem(MIND_BRIDGE_USER_STORAGE_KEY);
       setUserId(session.user.id);
+      setAccessToken(session.access_token);
       setAuthEmail(session.user.email ?? null);
       setAuthFullName(readFullName(session.user));
       setHasSupabaseAuth(true);
@@ -149,8 +151,12 @@ export function MindBridgeUserProvider({ children }: { children: ReactNode }) {
 
   const authHeaders = useCallback((): HeadersInit => {
     if (!userId) return {};
-    return { "x-mindbridge-user-id": userId };
-  }, [userId]);
+    const h: Record<string, string> = { "x-mindbridge-user-id": userId };
+    if (accessToken) {
+      h.Authorization = `Bearer ${accessToken}`;
+    }
+    return h;
+  }, [userId, accessToken]);
 
   const isAuthenticated = !!(userId && hasSupabaseAuth);
 

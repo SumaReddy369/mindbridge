@@ -21,12 +21,14 @@ export function isSupabaseConfigured(): boolean {
  * create table users (
  *   id uuid primary key default gen_random_uuid(),
  *   created_at timestamptz default now(),
- *   frequency_days integer default 2 check (frequency_days between 1 and 7),
+ *   frequency_days integer default 2 check (frequency_days between 1 and 30),
  *   last_checkin_at timestamptz,
  *   nudge_shown_at timestamptz,
  *   full_name text
  * );
  * -- If you already created users: alter table users add column if not exists full_name text;
+ * -- Per-user Google Calendar OAuth (server-only; never expose to client):
+ * -- alter table users add column if not exists google_calendar_refresh_token text;
  *
  * create table checkins (
  *   id uuid primary key default gen_random_uuid(),

@@ -16,6 +16,8 @@ import {
   updateFollowup as mockUpdateFollowup,
   deleteAllUserData as mockDeleteAll,
   createUser as mockCreateUser,
+  getGoogleCalendarRefreshTokenMock,
+  setGoogleCalendarRefreshTokenMock,
   store,
 } from "@/lib/mockData";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -44,6 +46,18 @@ function admin(): SupabaseClient {
 }
 
 function rowToUser(r: Record<string, unknown>): User {
+  const rawInterests = r.checkin_interests;
+  let checkin_interests: string[] | null | undefined;
+  if (Array.isArray(rawInterests)) {
+    checkin_interests = rawInterests as string[];
+  } else if (typeof rawInterests === "string" && rawInterests) {
+    try {
+      const p = JSON.parse(rawInterests) as unknown;
+      checkin_interests = Array.isArray(p) ? (p as string[]) : null;
+    } catch {
+      checkin_interests = null;
+    }
+  }
   return {
     id: r.id as string,
     created_at: r.created_at as string,
@@ -51,6 +65,11 @@ function rowToUser(r: Record<string, unknown>): User {
     last_checkin_at: (r.last_checkin_at as string | null) ?? null,
     nudge_shown_at: (r.nudge_shown_at as string | null) ?? null,
     full_name: (r.full_name as string | null | undefined) ?? null,
+    checkin_interests: checkin_interests ?? undefined,
+    calendar_connected: Boolean(
+      r.google_calendar_refresh_token &&
+        String(r.google_calendar_refresh_token).trim()
+    ),
   };
 }
 
@@ -169,6 +188,38 @@ export async function getUser(userId: string): Promise<User | null> {
   return rowToUser(data as Record<string, unknown>);
 }
 
+export async function getGoogleCalendarRefreshToken(
+  userId: string
+): Promise<string | null> {
+  if (!useSupabase()) {
+    return getGoogleCalendarRefreshTokenMock(userId);
+  }
+  const { data } = await admin()
+    .from("users")
+    .select("google_calendar_refresh_token")
+    .eq("id", userId)
+    .maybeSingle();
+  const t = (
+    data as { google_calendar_refresh_token?: string | null } | null
+  )?.google_calendar_refresh_token;
+  return typeof t === "string" && t.trim() ? t.trim() : null;
+}
+
+export async function saveGoogleCalendarRefreshToken(
+  userId: string,
+  token: string | null
+): Promise<void> {
+  if (!useSupabase()) {
+    setGoogleCalendarRefreshTokenMock(userId, token);
+    return;
+  }
+  const { error } = await admin()
+    .from("users")
+    .update({ google_calendar_refresh_token: token })
+    .eq("id", userId);
+  if (error) throw error;
+}
+
 export async function updateUser(
   userId: string,
   patch: Partial<User>
@@ -184,6 +235,9 @@ export async function updateUser(
   if (patch.nudge_shown_at !== undefined)
     row.nudge_shown_at = patch.nudge_shown_at;
   if (patch.full_name !== undefined) row.full_name = patch.full_name;
+  /* checkin_interests: add column `checkin_interests` (jsonb or text[]) on `users` before enabling:
+  if (patch.checkin_interests !== undefined) row.checkin_interests = patch.checkin_interests;
+  */
   const { data, error } = await admin()
     .from("users")
     .update(row)

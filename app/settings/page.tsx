@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import CheckInInterestsPicker from "@/components/CheckInInterestsPicker";
 import FrequencyPicker from "@/components/FrequencyPicker";
 import PageHeader from "@/components/PageHeader";
 import {
@@ -21,12 +22,19 @@ export default function SettingsPage() {
     signOut,
   } = useMindBridgeUser();
   const [frequency, setFrequency] = useState(2);
+  const [checkinInterests, setCheckinInterests] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [savingInterests, setSavingInterests] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedInterests, setSavedInterests] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  function interestsStorageKey(uid: string) {
+    return `mindbridge_checkin_interests_${uid}`;
+  }
 
   const loadUser = useCallback(async () => {
     if (!userId) return;
@@ -38,6 +46,20 @@ export default function SettingsPage() {
         const data = await res.json();
         if (data.user?.frequency_days != null) {
           setFrequency(data.user.frequency_days);
+        }
+        const fromApi = data.user?.checkin_interests;
+        if (Array.isArray(fromApi) && fromApi.length > 0) {
+          setCheckinInterests(fromApi);
+        } else {
+          try {
+            const raw = localStorage.getItem(interestsStorageKey(userId));
+            const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+            if (Array.isArray(parsed)) {
+              setCheckinInterests(parsed.filter((x) => typeof x === "string"));
+            }
+          } catch {
+            /* ignore */
+          }
         }
       } else if (res.status === 404) {
         setLoadError("Session not found — try starting a new check-in.");
@@ -77,6 +99,39 @@ export default function SettingsPage() {
     }
   }
 
+  async function saveCheckinInterests(next: string[]) {
+    if (!userId) return;
+    setCheckinInterests(next);
+    setSavingInterests(true);
+    setSavedInterests(false);
+    try {
+      try {
+        localStorage.setItem(
+          interestsStorageKey(userId),
+          JSON.stringify(next)
+        );
+      } catch {
+        /* ignore */
+      }
+      const res = await fetch("/api/user", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
+        body: JSON.stringify({ checkin_interests: next }),
+      });
+      if (res.ok) {
+        setSavedInterests(true);
+        setTimeout(() => setSavedInterests(false), 2000);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingInterests(false);
+    }
+  }
+
   async function handleDelete() {
     if (!userId) return;
     setDeleting(true);
@@ -91,6 +146,11 @@ export default function SettingsPage() {
       });
       localStorage.removeItem(MIND_BRIDGE_USER_STORAGE_KEY);
       localStorage.removeItem(JUDGE_DEMO_FLAG);
+      try {
+        localStorage.removeItem(interestsStorageKey(userId));
+      } catch {
+        /* ignore */
+      }
       await getSupabaseBrowserClient()?.auth.signOut();
       setDeleted(true);
     } catch (err) {
@@ -147,10 +207,12 @@ export default function SettingsPage() {
       <div className="surface-card space-y-4">
         <div>
           <h2 className="font-display text-base font-semibold tracking-tight text-brand-600">
-            Check-in frequency
+            Check-in rhythm & focus
           </h2>
           <p className="mt-1 text-sm leading-relaxed text-brand-600/65">
-            How often should we remind you? (Used by the cron reminder path.)
+            Choose how often you want nudges (every 2 or 3 days are common), or
+            use <strong className="text-brand-600/85">Custom interval</strong> for
+            any spacing from 1–30 days. Then pick optional focus areas below.
           </p>
         </div>
         <FrequencyPicker
@@ -159,8 +221,24 @@ export default function SettingsPage() {
           disabled={saving}
         />
         {saved && (
-          <p className="text-sm font-medium text-accent">✓ Saved</p>
+          <p className="text-sm font-medium text-accent">✓ Frequency saved</p>
         )}
+
+        <div className="border-t border-brand-600/10 pt-6 mt-6">
+          <CheckInInterestsPicker
+            value={checkinInterests}
+            onChange={(next) => void saveCheckinInterests(next)}
+            disabled={savingInterests}
+          />
+          {savedInterests && (
+            <p className="mt-2 text-sm font-medium text-accent">
+              ✓ Focus areas saved
+            </p>
+          )}
+          <p className="mt-3 text-[11px] leading-relaxed text-brand-600/45">
+            If you use cloud Supabase without a <code className="rounded bg-brand-200/50 px-1">checkin_interests</code> column yet, focus areas are also kept in this browser until your database is updated.
+          </p>
+        </div>
       </div>
 
       {isAuthenticated && authEmail && (

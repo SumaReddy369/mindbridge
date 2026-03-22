@@ -6,6 +6,13 @@ export interface User {
   nudge_shown_at: string | null;
   /** Display name from registration (optional in DB until migrated) */
   full_name?: string | null;
+  /**
+   * Topics the student wants check-ins to lean toward (reminders / AI tone).
+   * Persisted in mock store; add `checkin_interests text[]` (or jsonb) on `users` in Supabase to sync in production.
+   */
+  checkin_interests?: string[] | null;
+  /** True when this user has linked Google Calendar (OAuth refresh token stored server-side). */
+  calendar_connected?: boolean;
 }
 
 export interface Checkin {

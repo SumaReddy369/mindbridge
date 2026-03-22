@@ -44,10 +44,15 @@ export default function CanvasEmbedPage() {
   );
   const [gcalLoading, setGcalLoading] = useState(false);
   const [gcalError, setGcalError] = useState<string | null>(null);
-  /** null = not checked yet; false = env not set (503 from API) */
+  /** null = not checked yet; false = OAuth client not configured (503 from API) */
   const [gcalServerConfigured, setGcalServerConfigured] = useState<
     boolean | null
   >(null);
+  /** Signed in but OAuth refresh token not stored yet — show Connect */
+  const [gcalNeedsConnect, setGcalNeedsConnect] = useState(false);
+  const [gcalSource, setGcalSource] = useState<"user" | "env_demo" | null>(
+    null
+  );
   const [gcalInfo, setGcalInfo] = useState<string | null>(null);
   const [showProactiveModal, setShowProactiveModal] = useState(false);
   const proactiveModalSuppressedSig = useRef<string | null>(null);
@@ -124,19 +129,60 @@ export default function CanvasEmbedPage() {
     return () => window.removeEventListener("message", onMessage);
   }, [refreshContext]);
 
-  // Probe once: is Google Calendar API configured on the server? (for judge setup hints)
+  // Probe: OAuth client configured? User calendar vs shared demo token?
   useEffect(() => {
+    if (!ready || !userId) return;
     let cancelled = false;
-    fetch("/api/google-calendar/events?days=1")
-      .then((res) => {
-        if (!cancelled) setGcalServerConfigured(res.status !== 503);
-      })
-      .catch(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/google-calendar/events?days=1", {
+          headers: { ...authHeaders() },
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          needsConnect?: boolean;
+          source?: "user" | "env_demo";
+        };
+        if (cancelled) return;
+        if (res.ok) {
+          setGcalServerConfigured(true);
+          setGcalNeedsConnect(false);
+          if (data.source) setGcalSource(data.source);
+          return;
+        }
+        if (res.status === 503 && data.needsConnect) {
+          setGcalServerConfigured(true);
+          setGcalNeedsConnect(true);
+          return;
+        }
+        setGcalServerConfigured(false);
+        setGcalNeedsConnect(false);
+      } catch {
         if (!cancelled) setGcalServerConfigured(false);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
+  }, [ready, userId, authHeaders]);
+
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const g = p.get("google_calendar");
+    if (g === "connected") {
+      setGcalInfo(
+        "Google Calendar connected. Use Load calendar to pull your events (same workload flow as Canvas due dates)."
+      );
+      setGcalNeedsConnect(false);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    if (g === "error" || g === "no_refresh") {
+      setGcalError(
+        g === "no_refresh"
+          ? "Google did not return a refresh token. In Google Account → Security → Third-party access, remove MindBridge and try Connect again."
+          : "Could not complete Google Calendar connection."
+      );
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   function clearWorkloadCache() {
@@ -154,6 +200,7 @@ export default function CanvasEmbedPage() {
     setWelcomeSet(false);
     setGcalError(null);
     setGcalInfo(null);
+    setGcalSource(null);
     proactiveModalSuppressedSig.current = null;
     setShowProactiveModal(false);
   }
@@ -172,6 +219,24 @@ export default function CanvasEmbedPage() {
     }
   }, []);
 
+  async function connectGoogleCalendar() {
+    setGcalError(null);
+    setGcalInfo(null);
+    try {
+      const res = await fetch("/api/google-calendar/oauth/start", {
+        method: "POST",
+        headers: { ...authHeaders() },
+      });
+      const data = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || "Could not start Google connect");
+      }
+      if (data.url) window.location.href = data.url;
+    } catch (e) {
+      setGcalError(e instanceof Error ? e.message : "Connect failed");
+    }
+  }
+
   async function loadGoogleCalendar() {
     setGcalError(null);
     setGcalInfo(null);
@@ -186,13 +251,20 @@ export default function CanvasEmbedPage() {
         error?: string;
         hint?: string;
         eventCount?: number;
+        needsConnect?: boolean;
+        source?: "user" | "env_demo";
       };
       if (res.status === 503) {
-        setGcalServerConfigured(false);
+        if (data.needsConnect) {
+          setGcalServerConfigured(true);
+          setGcalNeedsConnect(true);
+        } else {
+          setGcalServerConfigured(false);
+        }
         throw new Error(
           data.hint ||
             data.error ||
-            "Google Calendar is not configured on the server (.env.local)."
+            "Google Calendar is not available. Check server env or connect your calendar."
         );
       }
       if (!res.ok) {
@@ -200,6 +272,8 @@ export default function CanvasEmbedPage() {
       }
       if (data.analysis && data.workloadContext) {
         setGcalServerConfigured(true);
+        setGcalNeedsConnect(false);
+        if (data.source) setGcalSource(data.source);
         if ((data.eventCount ?? 0) === 0) {
           setGcalInfo(
             "No events in the next 14 days on this calendar — add a few timed events, then load again (same idea as Canvas due dates)."
@@ -261,7 +335,9 @@ export default function CanvasEmbedPage() {
       workloadSource === "gcal"
         ? analysis.suggestProactiveCheckin
           ? "Hey — MindBridge is a private check-in spot. Your calendar shows a busy stretch ahead — how are you *actually* doing, not just academically?"
-          : "Hey — I’m MindBridge. I’m using your Google Calendar (demo) for upcoming events — same idea as Canvas due dates. How are you doing today?"
+          : gcalSource === "user"
+            ? "Hey — I’m MindBridge. I’m using your Google Calendar for upcoming events — same idea as Canvas due dates. How are you doing today?"
+            : "Hey — I’m MindBridge. I’m using Google Calendar for upcoming events — same idea as Canvas due dates. How are you doing today?"
         : analysis.suggestProactiveCheckin
           ? "Hey — MindBridge is a private check-in spot (nothing here goes to your grades or instructors). It looks like a lot is coming due — how are you *actually* doing, not just academically?"
           : "Hey — I’m MindBridge, a private check-in companion inside Canvas. Nothing you write is sent to instructors. How are you doing today?";
@@ -375,7 +451,9 @@ export default function CanvasEmbedPage() {
             <div className="bg-brand-200/50 px-4 py-3">
               <p className="text-xs font-semibold text-brand-600/80">
                 {workloadSource === "gcal"
-                  ? "From your Google Calendar (demo)"
+                  ? gcalSource === "user"
+                    ? "From your Google Calendar"
+                    : "From Google Calendar (shared demo server)"
                   : workloadSource === "demo"
                     ? "Demo workload (simulated)"
                     : workloadSource === "canvas"
@@ -389,19 +467,36 @@ export default function CanvasEmbedPage() {
                 Next 48h: {analysis.dueNext48h} · Next 7 days: {analysis.dueNext7d}{" "}
                 · Tracked items: {analysis.totalTracked}
               </p>
-              <p className="mt-1.5 text-[10px] leading-snug text-brand-600/50">
-                Google Calendar here is a <strong className="text-brand-600/70">demo</strong>{" "}
-                for schools without Canvas API access — same workload logic as Canvas due
-                dates.
-              </p>
+              {gcalSource === "env_demo" && (
+                <p className="mt-1.5 text-[10px] leading-snug text-brand-600/50">
+                  This session uses a <strong className="text-brand-600/70">shared demo</strong>{" "}
+                  Google account from the server — same workload logic as Canvas due dates.
+                  Sign in and connect your own calendar for personal events.
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap gap-2 border-t border-brand-600/10 pt-2">
+                {gcalNeedsConnect && (
+                  <button
+                    type="button"
+                    onClick={() => void connectGoogleCalendar()}
+                    className="rounded-lg border border-accent/40 bg-accent/15 px-2.5 py-1 text-[10px] font-semibold text-brand-600 hover:bg-accent/25"
+                  >
+                    Connect Google Calendar
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void loadGoogleCalendar()}
-                  disabled={gcalLoading}
+                  disabled={gcalLoading || gcalNeedsConnect}
                   className="rounded-lg border border-brand-600/20 bg-white/80 px-2.5 py-1 text-[10px] font-semibold text-brand-600 hover:bg-brand-200/40 disabled:opacity-50"
                 >
-                  {gcalLoading ? "Loading…" : "Reload Google Calendar (demo)"}
+                  {gcalLoading
+                    ? "Loading…"
+                    : gcalNeedsConnect
+                      ? "Load calendar (connect first)"
+                      : gcalSource === "user"
+                        ? "Reload my calendar"
+                        : "Reload Google Calendar"}
                 </button>
                 <button
                   type="button"
@@ -432,14 +527,21 @@ export default function CanvasEmbedPage() {
                 </p>
                 <p className="text-brand-600/85 leading-relaxed">
                   With Canvas, due dates load automatically (LTI). Without school
-                  Canvas access, use <strong>Google Calendar (demo)</strong> — it
+                  Canvas access, connect <strong>your Google Calendar</strong> — it
                   feeds the same workload + check-in flow as Canvas assignments.
                 </p>
                 {gcalServerConfigured === false && (
                   <p className="rounded-lg bg-amber-100/90 px-2 py-1.5 text-[11px] text-amber-950/90">
-                    Google Calendar isn&apos;t configured on the server yet. Add{" "}
-                    <code className="rounded bg-white/60 px-1">GOOGLE_*</code> env
-                    vars (see link below), then restart the dev server.
+                    Google OAuth isn&apos;t configured on the server yet. Add{" "}
+                    <code className="rounded bg-white/60 px-1">GOOGLE_CLIENT_ID</code>{" "}
+                    and <code className="rounded bg-white/60 px-1">GOOGLE_CLIENT_SECRET</code>{" "}
+                    (see docs), set the OAuth redirect URI, then restart the dev server.
+                  </p>
+                )}
+                {gcalNeedsConnect && gcalServerConfigured !== false && (
+                  <p className="rounded-lg bg-brand-200/80 px-2 py-1.5 text-[11px] text-brand-600/90">
+                    Connect Google Calendar once so we can read <strong>your</strong>{" "}
+                    events (read-only). Then load the calendar below.
                   </p>
                 )}
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -450,13 +552,26 @@ export default function CanvasEmbedPage() {
                   >
                     Simulate busy week
                   </button>
+                  {gcalNeedsConnect && (
+                    <button
+                      type="button"
+                      onClick={() => void connectGoogleCalendar()}
+                      className="btn-solid-cocina rounded-lg text-[11px] normal-case"
+                    >
+                      Connect Google Calendar
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void loadGoogleCalendar()}
-                    disabled={gcalLoading}
+                    disabled={gcalLoading || gcalNeedsConnect}
                     className="btn-outline-cocina rounded-lg text-[11px] normal-case disabled:opacity-50"
                   >
-                    {gcalLoading ? "Loading calendar…" : "Load Google Calendar (demo)"}
+                    {gcalLoading
+                      ? "Loading calendar…"
+                      : gcalNeedsConnect
+                        ? "Load calendar (connect first)"
+                        : "Load my calendar"}
                   </button>
                 </div>
                 <a
@@ -485,8 +600,15 @@ export default function CanvasEmbedPage() {
                 <ChatBubble key={i} message={msg} />
               ))}
               {loading && (
-                <div className="flex justify-start mb-2 text-xs text-brand-600/45 px-2">
-                  …
+                <div className="flex justify-start mb-3">
+                  <div className="mr-3 mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center">
+                    <BrandIcon size="chat" />
+                  </div>
+                  <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-sm bg-brand-200/55 px-4 py-3">
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-accent/40 [animation-delay:0ms]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-accent/40 [animation-delay:150ms]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-accent/40 [animation-delay:300ms]" />
+                  </div>
                 </div>
               )}
               <div ref={bottomRef} />

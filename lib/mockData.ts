@@ -28,6 +28,30 @@ export const store = {
   followups: new Map<string, Followup>(),
 };
 
+/** Per-user Google OAuth refresh tokens (mock DB only; never sent to client). */
+const googleCalendarRefreshTokens = new Map<string, string>();
+
+function withCalendarConnected(u: User): User {
+  return {
+    ...u,
+    calendar_connected: googleCalendarRefreshTokens.has(u.id),
+  };
+}
+
+export function getGoogleCalendarRefreshTokenMock(
+  userId: string
+): string | null {
+  return googleCalendarRefreshTokens.get(userId) ?? null;
+}
+
+export function setGoogleCalendarRefreshTokenMock(
+  userId: string,
+  token: string | null
+): void {
+  if (token === null || token === "") googleCalendarRefreshTokens.delete(userId);
+  else googleCalendarRefreshTokens.set(userId, token);
+}
+
 // ─── Seed user ───────────────────────────────────────────────────────────────
 
 const demoUser: User = {
@@ -153,7 +177,9 @@ store.weeklySummaries.set(seedSummary.id, seedSummary);
 // ─── CRUD helpers ─────────────────────────────────────────────────────────────
 
 export function getUser(userId: string): User | undefined {
-  return store.users.get(userId);
+  const u = store.users.get(userId);
+  if (!u) return undefined;
+  return withCalendarConnected(u);
 }
 
 /** Ensure a user row exists for this id (used after client bootstrap). */
@@ -167,9 +193,9 @@ export function ensureUserWithId(
     if (fullName != null && fullName !== "" && existing.full_name !== fullName) {
       const updated = { ...existing, full_name: fullName };
       store.users.set(userId, updated);
-      return updated;
+      return withCalendarConnected(updated);
     }
-    return existing;
+    return withCalendarConnected(existing);
   }
   const user: User = {
     id: userId,
@@ -180,7 +206,7 @@ export function ensureUserWithId(
     full_name: fullName && fullName !== "" ? fullName : null,
   };
   store.users.set(userId, user);
-  return user;
+  return withCalendarConnected(user);
 }
 
 export function createUser(frequencyDays = 2): User {
@@ -193,15 +219,16 @@ export function createUser(frequencyDays = 2): User {
     full_name: null,
   };
   store.users.set(user.id, user);
-  return user;
+  return withCalendarConnected(user);
 }
 
 export function updateUser(userId: string, patch: Partial<User>): User | null {
   const user = store.users.get(userId);
   if (!user) return null;
-  const updated = { ...user, ...patch };
+  const { calendar_connected: _c, ...rest } = patch;
+  const updated = { ...user, ...rest };
   store.users.set(userId, updated);
-  return updated;
+  return withCalendarConnected(updated);
 }
 
 export function getCheckins(userId: string): Checkin[] {
@@ -263,6 +290,7 @@ export function updateFollowup(
 }
 
 export function deleteAllUserData(userId: string): void {
+  googleCalendarRefreshTokens.delete(userId);
   store.users.delete(userId);
   store.checkins.forEach((c, id) => {
     if (c.user_id === userId) store.checkins.delete(id);

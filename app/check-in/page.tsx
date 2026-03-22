@@ -6,6 +6,7 @@ import CheckInInput from "@/components/CheckInInput";
 import CrisisOverlay from "@/components/CrisisOverlay";
 import ResourceLinks from "@/components/ResourceLinks";
 import JudgeTourBanner from "@/components/JudgeTourBanner";
+import BrandIcon from "@/components/BrandIcon";
 import { useMindBridgeUser } from "@/hooks/useMindBridgeUser";
 import { ChatMessage, Checkin, Resource } from "@/types";
 import { getResourcesForTags } from "@/lib/resources";
@@ -169,8 +170,8 @@ export default function CheckInPage() {
                   : "Not yet saved this session"}
               </p>
             </div>
-            <span className="text-2xl" aria-hidden>
-              💬
+            <span className="flex h-9 w-9 items-center justify-center" aria-hidden>
+              <BrandIcon size="chat" />
             </span>
           </div>
           {apiError && (
@@ -187,8 +188,8 @@ export default function CheckInPage() {
 
           {loading && (
             <div className="flex justify-start mb-3">
-              <div className="mr-3 mt-1 flex h-8 w-8 items-center justify-center rounded-full bg-brand-200/70 text-sm">
-                🌉
+              <div className="mr-3 mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center">
+                <BrandIcon size="chat" />
               </div>
               <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-sm bg-brand-200/55 px-4 py-3">
                 <span className="h-2 w-2 animate-bounce rounded-full bg-accent/40 [animation-delay:0ms]" />
