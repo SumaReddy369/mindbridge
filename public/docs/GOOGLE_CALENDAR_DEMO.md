@@ -48,6 +48,8 @@ Restart `npm run dev`.
 3. Click **Load Google Calendar (demo)**.
 4. You should see the workload strip and a check-in welcome that references a busy schedule — same behavior as Canvas-backed due dates.
 5. When the workload rules flag a **busy stretch** (`suggestProactiveCheckin` in code), a **modal pops up** on top of the embed (“A lot is coming due”) so judges can see proactive outreach without hunting for it. Use **Simulate busy week** or a heavy calendar week to trigger it; **Not now** dismisses until the workload snapshot changes.
+6. If the **Load Google Calendar** buttons disappear, the embed may have **cached** a previous workload in the browser. Use **Reset workload source** (in the workload strip when loaded) or clear site data — then load Calendar or **Simulate busy week** again.
+7. If you see a **yellow notice** that Calendar isn’t configured, add the `GOOGLE_*` variables to `.env.local` and restart `npm run dev`.
 
 ## Security note
 

@@ -44,6 +44,11 @@ export default function CanvasEmbedPage() {
   );
   const [gcalLoading, setGcalLoading] = useState(false);
   const [gcalError, setGcalError] = useState<string | null>(null);
+  /** null = not checked yet; false = env not set (503 from API) */
+  const [gcalServerConfigured, setGcalServerConfigured] = useState<
+    boolean | null
+  >(null);
+  const [gcalInfo, setGcalInfo] = useState<string | null>(null);
   const [showProactiveModal, setShowProactiveModal] = useState(false);
   const proactiveModalSuppressedSig = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -76,6 +81,7 @@ export default function CanvasEmbedPage() {
       source: WorkloadSource = "canvas"
     ) => {
       setGcalError(null);
+      setGcalInfo(null);
       const res = await fetch("/api/canvas/context", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -118,6 +124,40 @@ export default function CanvasEmbedPage() {
     return () => window.removeEventListener("message", onMessage);
   }, [refreshContext]);
 
+  // Probe once: is Google Calendar API configured on the server? (for judge setup hints)
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/google-calendar/events?days=1")
+      .then((res) => {
+        if (!cancelled) setGcalServerConfigured(res.status !== 503);
+      })
+      .catch(() => {
+        if (!cancelled) setGcalServerConfigured(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function clearWorkloadCache() {
+    try {
+      sessionStorage.removeItem(STORAGE_ANALYSIS);
+      sessionStorage.removeItem(STORAGE_WORKLOAD);
+      sessionStorage.removeItem(STORAGE_SOURCE);
+    } catch {
+      /* ignore */
+    }
+    setAnalysis(null);
+    setWorkloadContext(null);
+    setWorkloadSource(null);
+    setMessages([]);
+    setWelcomeSet(false);
+    setGcalError(null);
+    setGcalInfo(null);
+    proactiveModalSuppressedSig.current = null;
+    setShowProactiveModal(false);
+  }
+
   // Restore cached analysis
   useEffect(() => {
     try {
@@ -134,6 +174,7 @@ export default function CanvasEmbedPage() {
 
   async function loadGoogleCalendar() {
     setGcalError(null);
+    setGcalInfo(null);
     setGcalLoading(true);
     try {
       const res = await fetch("/api/google-calendar/events?days=14", {
@@ -144,11 +185,26 @@ export default function CanvasEmbedPage() {
         workloadContext?: string;
         error?: string;
         hint?: string;
+        eventCount?: number;
       };
+      if (res.status === 503) {
+        setGcalServerConfigured(false);
+        throw new Error(
+          data.hint ||
+            data.error ||
+            "Google Calendar is not configured on the server (.env.local)."
+        );
+      }
       if (!res.ok) {
         throw new Error(data.hint || data.error || "Could not load calendar");
       }
       if (data.analysis && data.workloadContext) {
+        setGcalServerConfigured(true);
+        if ((data.eventCount ?? 0) === 0) {
+          setGcalInfo(
+            "No events in the next 14 days on this calendar — add a few timed events, then load again (same idea as Canvas due dates)."
+          );
+        }
         setWorkloadSource("gcal");
         setWelcomeSet(false);
         setMessages([]);
@@ -333,6 +389,38 @@ export default function CanvasEmbedPage() {
                 Next 48h: {analysis.dueNext48h} · Next 7 days: {analysis.dueNext7d}{" "}
                 · Tracked items: {analysis.totalTracked}
               </p>
+              <p className="mt-1.5 text-[10px] leading-snug text-brand-600/50">
+                Google Calendar here is a <strong className="text-brand-600/70">demo</strong>{" "}
+                for schools without Canvas API access — same workload logic as Canvas due
+                dates.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2 border-t border-brand-600/10 pt-2">
+                <button
+                  type="button"
+                  onClick={() => void loadGoogleCalendar()}
+                  disabled={gcalLoading}
+                  className="rounded-lg border border-brand-600/20 bg-white/80 px-2.5 py-1 text-[10px] font-semibold text-brand-600 hover:bg-brand-200/40 disabled:opacity-50"
+                >
+                  {gcalLoading ? "Loading…" : "Reload Google Calendar (demo)"}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearWorkloadCache}
+                  className="rounded-lg px-2.5 py-1 text-[10px] font-medium text-brand-600/70 underline-offset-2 hover:text-brand-600 hover:underline"
+                >
+                  Reset workload source
+                </button>
+              </div>
+              {gcalError && (
+                <p className="mt-1.5 text-[11px] text-rose-700" role="alert">
+                  {gcalError}
+                </p>
+              )}
+              {gcalInfo && workloadSource === "gcal" && (
+                <p className="mt-1.5 text-[11px] text-brand-600/75" role="status">
+                  {gcalInfo}
+                </p>
+              )}
             </div>
           )}
 
@@ -344,9 +432,16 @@ export default function CanvasEmbedPage() {
                 </p>
                 <p className="text-brand-600/85 leading-relaxed">
                   With Canvas, due dates load automatically (LTI). Without school
-                  Canvas, use a simulated week or your own Google Calendar for a
-                  judge demo.
+                  Canvas access, use <strong>Google Calendar (demo)</strong> — it
+                  feeds the same workload + check-in flow as Canvas assignments.
                 </p>
+                {gcalServerConfigured === false && (
+                  <p className="rounded-lg bg-amber-100/90 px-2 py-1.5 text-[11px] text-amber-950/90">
+                    Google Calendar isn&apos;t configured on the server yet. Add{" "}
+                    <code className="rounded bg-white/60 px-1">GOOGLE_*</code> env
+                    vars (see link below), then restart the dev server.
+                  </p>
+                )}
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                   <button
                     type="button"
@@ -375,6 +470,11 @@ export default function CanvasEmbedPage() {
                 {gcalError && (
                   <p className="text-[11px] text-rose-700" role="alert">
                     {gcalError}
+                  </p>
+                )}
+                {gcalInfo && (
+                  <p className="text-[11px] text-brand-600/80" role="status">
+                    {gcalInfo}
                   </p>
                 )}
               </div>
